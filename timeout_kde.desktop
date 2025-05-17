@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=KDE Timeout Manager
+Comment=Limits computer usage to a predefined amount of time per day
+Exec=python3 /opt/timeout_kde/timeout_kde.py
+Icon=chronometer
+Type=Application
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-phase=2
