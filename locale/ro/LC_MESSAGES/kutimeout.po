@@ -1,0 +1,43 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: kutimeout 0.0.1\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-03 10:00+0000\n"
+"PO-Revision-Date: 2026-04-03 10:05+0000\n"
+"Last-Translator: \n"
+"Language-Team: Romanian\n"
+"Language: ro\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : (n==0 || (n%100 > 0 && n%100 < 20)) ? 1 : 2);\n"
+
+msgid "KDE Plasma session timeout manager"
+msgstr "Manager pentru limita de timp a sesiunii KDE Plasma"
+
+msgid "Daily time limit in minutes (default: 60 or from config)"
+msgstr "Limita zilnică în minute (implicit: 60 sau din configurare)"
+
+msgid "Path to configuration file"
+msgstr "Calea către fișierul de configurare"
+
+msgid "Grace period in minutes after startup before enforcing logout (default: 1)"
+msgstr "Perioada de grație în minute după pornire înainte de deconectare (implicit: 1)"
+
+msgid "Minutes before logout to warn the user (default: 5)"
+msgstr "Minute înainte de deconectare pentru a avertiza utilizatorul (implicit: 5)"
+
+msgid "Enable verbose logging"
+msgstr "Activează jurnalizarea detaliată"
+
+msgid "Your daily time limit of {limit} min is approaching.\nYou will be logged out in approximately {remaining:.0f} minutes."
+msgstr "Limita zilnică de {limit} min se apropie.\nVei fi deconectat în aproximativ {remaining:.0f} minute."
+
+msgid "Time Limit Warning"
+msgstr "Avertizare Limită de Timp"
+
+msgid "Logging Out"
+msgstr "Deconectare"
+
+msgid "Your daily time limit has been reached. Logging out now."
+msgstr "Limita zilnică a fost atinsă. Deconectare acum."

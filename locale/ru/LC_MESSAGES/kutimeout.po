@@ -1,0 +1,43 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: kutimeout 0.0.1\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-03 10:00+0000\n"
+"PO-Revision-Date: 2026-04-03 10:10+0000\n"
+"Last-Translator: \n"
+"Language-Team: Russian\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "KDE Plasma session timeout manager"
+msgstr "Менеджер ограничения времени сессии KDE Plasma"
+
+msgid "Daily time limit in minutes (default: 60 or from config)"
+msgstr "Ежедневный лимит времени в минутах (по умолчанию: 60 или из конфига)"
+
+msgid "Path to configuration file"
+msgstr "Путь к файлу конфигурации"
+
+msgid "Grace period in minutes after startup before enforcing logout (default: 1)"
+msgstr "Льготный период в минутах после запуска перед принудительным выходом (по умолчанию: 1)"
+
+msgid "Minutes before logout to warn the user (default: 5)"
+msgstr "Минуты до выхода для предупреждения пользователя (по умолчанию: 5)"
+
+msgid "Enable verbose logging"
+msgstr "Включить подробное логирование"
+
+msgid "Your daily time limit of {limit} min is approaching.\nYou will be logged out in approximately {remaining:.0f} minutes."
+msgstr "Ваш ежедневный лимит времени ({limit} мин) подходит к концу.\nВыход из системы произойдет примерно через {remaining:.0f} мин."
+
+msgid "Time Limit Warning"
+msgstr "Предупреждение об ограничении времени"
+
+msgid "Logging Out"
+msgstr "Завершение сеанса"
+
+msgid "Your daily time limit has been reached. Logging out now."
+msgstr "Ваш ежедневный лимит времени исчерпан. Завершение сеанса."

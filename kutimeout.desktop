@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=KDE Timeout Manager
+Name=KUTimeout
 Comment=Limits computer usage to a predefined amount of time per day
-Exec=python3 /opt/timeout_kde/timeout_kde.py
+Exec=/usr/bin/kutimeout
 Icon=chronometer
 Type=Application
 X-GNOME-Autostart-enabled=true
