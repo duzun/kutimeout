@@ -16,6 +16,16 @@ WARNING! No work is saved automatically when logging out. You can lose date. Use
 
 ## Installation
 
+### Manjaro / Arch Linux (AUR)
+
+You can build and install the package using `makepkg` from this repository:
+
+```bash
+makepkg -si
+```
+
+### Manual Installation
+
 1. Clone or download this repository.
 2. Run the installation script:
 

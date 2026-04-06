@@ -1,0 +1,9 @@
+post_install() {
+  echo ">>> KUTimeout has been installed."
+  echo ">>> Configuration is located at ~/.config/kutimeout/config.json"
+  echo ">>> The script will autostart on the next login."
+}
+
+post_upgrade() {
+  post_install
+}

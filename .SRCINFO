@@ -1,0 +1,22 @@
+pkgbase = kutimeout
+	pkgdesc = A KDE Plasma session manager that limits daily computer usage and automatically logs out the user
+	pkgver = 0.0.1
+	pkgrel = 1
+	url = https://github.com/duzun/kutimeout
+	install = kutimeout.install
+	arch = any
+	license = MIT
+	depends = python
+	depends = qt5-tools
+	depends = libnotify
+	optdepends = plasma-desktop: for KDE session management
+	source = kutimeout.py
+	source = kutimeout.desktop
+	source = README.md
+	source = LICENSE
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+
+pkgname = kutimeout
