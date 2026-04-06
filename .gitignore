@@ -1,1 +1,6 @@
 *.pyc
+
+# `makepkg -si` artifacts
+*.pkg.tar.zst
+pkg/
+src/
