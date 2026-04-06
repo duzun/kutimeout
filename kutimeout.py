@@ -84,25 +84,51 @@ class TimeoutManager:
         # Load or create config
         self.config = self.load_config()
 
-        # Apply CLI override if provided
+        config_updated = False
+
+        # Apply CLI overrides if provided
         if self.cli_time_limit is not None:
             if self.config.get("time_limit_minutes") != self.cli_time_limit:
                 logger.info(
                     f"Overriding config time limit ({self.config.get('time_limit_minutes')} min) with CLI argument ({self.cli_time_limit} min)"
                 )
                 self.config["time_limit_minutes"] = self.cli_time_limit
-                self.save_config()
+                config_updated = True
+
+        if startup_grace_period is not None:
+            if self.config.get("grace_period_minutes") != startup_grace_period:
+                logger.info(
+                    f"Overriding config grace period ({self.config.get('grace_period_minutes')} min) with CLI argument ({startup_grace_period} min)"
+                )
+                self.config["grace_period_minutes"] = startup_grace_period
+                config_updated = True
+
+        if warning_minutes is not None:
+            if self.config.get("warning_minutes") != warning_minutes:
+                logger.info(
+                    f"Overriding config warning time ({self.config.get('warning_minutes')} min) with CLI argument ({warning_minutes} min)"
+                )
+                self.config["warning_minutes"] = warning_minutes
+                config_updated = True
+
+        if config_updated:
+            self.save_config()
+
+        # Set the effective values from config (falling back to CLI/defaults)
+        self.time_limit_minutes = self.config.get(
+            "time_limit_minutes", self.cli_time_limit or 0
+        )
+        self.startup_grace_period = self.config.get(
+            "grace_period_minutes", startup_grace_period or 1
+        )
+        self.warning_minutes = self.config.get("warning_minutes", warning_minutes or 5)
 
         # Check for missing, 0, or -1 time limit and exit if necessary
-        time_limit = self.config.get("time_limit_minutes")
-        if time_limit is None or time_limit <= 0:
+        if self.time_limit_minutes <= 0:
             logger.info(
                 "Daily time limit not set or disabled (time_limit_minutes <= 0). Exiting."
             )
             sys.exit(0)
-
-        # Set the effective time limit
-        self.time_limit_minutes = time_limit
 
         # Set up signal handlers for clean shutdown
         signal.signal(signal.SIGINT, self.handle_signal)
@@ -128,6 +154,8 @@ class TimeoutManager:
             "time_limit_minutes": self.cli_time_limit
             if self.cli_time_limit is not None
             else 0,
+            "grace_period_minutes": 1,
+            "warning_minutes": 5,
             "usage": {today: 0},  # Minutes used today
             "last_update": datetime.now().isoformat(),
         }
@@ -401,32 +429,43 @@ def main():
         "--time-limit",
         type=int,
         default=None,
-        help=_("Daily time limit in minutes (default: 60 or from config)"),
+        help=_(
+            "Daily time limit in minutes. Use 0 to disable. (default: 0 or from config)"
+        ),
     )
     parser.add_argument(
-        "--config", type=str, default=None, help=_("Path to configuration file")
+        "--config",
+        type=str,
+        default=None,
+        help=_(
+            "Path to the configuration file (default: ~/.config/kutimeout/config.json)"
+        ),
     )
     parser.add_argument(
         "--grace-period",
         type=int,
         default=1,
         help=_(
-            "Grace period in minutes after startup before enforcing logout (default: 1)"
+            "Minimum minutes to wait after startup before logging out, even if the limit is exceeded (default: 1)"
         ),
     )
     parser.add_argument(
         "--warning-minutes",
         type=int,
         default=5,
-        help=_("Minutes before logout to warn the user (default: 5)"),
+        help=_("Minutes before logout to show a warning notification (default: 5)"),
     )
     parser.add_argument(
-        "--verbose", action="store_true", help=_("Enable verbose logging")
+        "--verbose",
+        action="store_true",
+        help=_("Enable detailed logging for troubleshooting"),
     )
     parser.add_argument(
         "--save",
         action="store_true",
-        help=_("Save CLI arguments to configuration file and exit"),
+        help=_(
+            "Update the configuration file with the provided CLI arguments and exit immediately"
+        ),
     )
 
     args = parser.parse_args()

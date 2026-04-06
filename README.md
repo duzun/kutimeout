@@ -65,6 +65,8 @@ The script stores its configuration in `~/.config/kutimeout/config.json`. **By d
 Key configuration options:
 
 - `time_limit_minutes`: The daily allowance in minutes. Set to a positive value (e.g., 120 for 2 hours) to enable the limit.
+- `grace_period_minutes`: Minimum minutes to wait after startup before enforcing logout.
+- `warning_minutes`: Minutes before logout to show a warning notification.
 - `usage`: Tracks minutes used per day.
 - `last_update`: Timestamp of the last usage update.
 
