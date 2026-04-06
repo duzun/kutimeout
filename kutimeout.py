@@ -7,6 +7,8 @@ Once the time limit is reached, it will automatically log out the user.
 @version 0.0.1
 
 Usage:
+    kutimeout.py --help
+    kutimeout.py [-l MINUTES] [-c CONFIG_FILE] [-g MINUTES] [-w MINUTES] [-t] [-v] [-s]
     kutimeout.py [--time-limit MINUTES] [--config CONFIG_FILE] [--grace-period MINUTES] [--warning-minutes MINUTES] [--track-usage] [--verbose] [--save]
 """
 
@@ -436,6 +438,7 @@ def main():
         description=_("KDE Plasma session timeout manager")
     )
     parser.add_argument(
+        "-l",
         "--time-limit",
         type=int,
         default=None,
@@ -444,6 +447,7 @@ def main():
         ),
     )
     parser.add_argument(
+        "-g",
         "--grace-period",
         type=int,
         default=1,
@@ -452,23 +456,27 @@ def main():
         ),
     )
     parser.add_argument(
+        "-w",
         "--warning-minutes",
         type=int,
         default=5,
         help=_("Minutes before logout to show a warning notification (default: 5)"),
     )
     parser.add_argument(
+        "-t",
         "--track-usage",
         action="store_true",
         default=None,
         help=_("Keep the service running and track usage even if no time limit is set"),
     )
     parser.add_argument(
+        "-v",
         "--verbose",
         action="store_true",
         help=_("Enable detailed logging for troubleshooting"),
     )
     parser.add_argument(
+        "-c",
         "--config",
         type=str,
         default=None,
@@ -477,6 +485,7 @@ def main():
         ),
     )
     parser.add_argument(
+        "-s",
         "--save",
         action="store_true",
         help=_(

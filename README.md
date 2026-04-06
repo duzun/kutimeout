@@ -49,17 +49,27 @@ The script starts automatically upon login. You can also run it manually or with
 kutimeout
 
 # Run with a custom 2-hour limit and verbose logging
-kutimeout --time-limit 120 --verbose
+kutimeout -l 120 -v
 
-# Change the time limit in the configuration and exit without running the service
-kutimeout --time-limit 120 --save
+# Change the time limit in the configuration and exit
+kutimeout -l 120 -s
 
 # Enable background usage tracking without a time limit
-kutimeout --track-usage --save
-
-# Use a specific configuration file
-kutimeout --config ~/my_limits.json
+kutimeout -t -s
 ```
+
+### Command Line Options
+
+| Short | Long | Description |
+|-------|------|-------------|
+| `-l` | `--time-limit` | Daily time limit in minutes. Use `0` to disable. |
+| `-t` | `--track-usage` | Track usage even if no time limit is set. |
+| `-s` | `--save` | Update the configuration file and exit immediately. |
+| `-g` | `--grace-period` | Minimum minutes to wait after startup before logout. |
+| `-w` | `--warning-minutes` | Minutes before logout to show a warning. |
+| `-c` | `--config` | Path to a custom configuration file. |
+| `-v` | `--verbose` | Enable detailed logging for troubleshooting. |
+| | `--help` | Show the help message and exit. |
 
 ## Configuration
 
