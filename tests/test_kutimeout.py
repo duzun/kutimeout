@@ -35,15 +35,28 @@ class TestTimeoutManager(unittest.TestCase):
 
     @patch("subprocess.run")
     def test_exit_on_zero_limit(self, mock_run):
-        """Test that the manager exits when the time limit is 0 or not set."""
+        """Test that the manager exits when the time limit is 0 and track_usage is False."""
         with self.assertRaises(SystemExit):
-            TimeoutManager(time_limit_minutes=0, config_file=self.temp_config)
+            TimeoutManager(
+                time_limit_minutes=0, config_file=self.temp_config, track_usage=False
+            )
 
         if self.temp_config.exists():
             self.temp_config.unlink()
 
         with self.assertRaises(SystemExit):
-            TimeoutManager(time_limit_minutes=-1, config_file=self.temp_config)
+            TimeoutManager(
+                time_limit_minutes=-1, config_file=self.temp_config, track_usage=False
+            )
+
+    @patch("subprocess.run")
+    def test_track_usage_no_limit(self, mock_run):
+        """Test that the manager DOES NOT exit when the time limit is 0 but track_usage is True."""
+        tm = TimeoutManager(
+            time_limit_minutes=0, config_file=self.temp_config, track_usage=True
+        )
+        self.assertEqual(tm.time_limit_minutes, 0)
+        self.assertTrue(tm.track_usage)
 
     @patch("subprocess.run")
     def test_cli_override(self, mock_run):

@@ -7,7 +7,7 @@ Once the time limit is reached, it will automatically log out the user.
 @version 0.0.1
 
 Usage:
-    timeout_kde.py [--time-limit MINUTES] [--config CONFIG_FILE]
+    kutimeout.py [--time-limit MINUTES] [--config CONFIG_FILE] [--grace-period MINUTES] [--warning-minutes MINUTES] [--track-usage] [--verbose] [--save]
 """
 
 import argparse
@@ -19,7 +19,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 # Setup translation
@@ -49,6 +49,7 @@ class TimeoutManager:
         config_file=None,
         startup_grace_period=1,
         warning_minutes=5,
+        track_usage=None,
     ):
         """
         Initialize the timeout manager.
@@ -58,12 +59,11 @@ class TimeoutManager:
             config_file: Path to the configuration file
             startup_grace_period: Grace period in minutes after startup before enforcing logout
             warning_minutes: Minutes before logout to warn the user
+            track_usage: Keep running and track usage even if no time limit is set
         """
         self.cli_time_limit = time_limit_minutes
         self.startup_time = datetime.now()
         self.last_update = self.startup_time
-        self.startup_grace_period = startup_grace_period  # Grace period in minutes
-        self.warning_minutes = warning_minutes
         self.warning_shown = False  # Whether the pre-logout warning has been shown
         self.warning_shown_at = None  # When the warning was first shown
         self.screen_locked = False  # Track screen lock state
@@ -111,6 +111,14 @@ class TimeoutManager:
                 self.config["warning_minutes"] = warning_minutes
                 config_updated = True
 
+        if track_usage is not None:
+            if self.config.get("track_usage") != track_usage:
+                logger.info(
+                    f"Overriding config track_usage ({self.config.get('track_usage')}) with CLI argument ({track_usage})"
+                )
+                self.config["track_usage"] = track_usage
+                config_updated = True
+
         if config_updated:
             self.save_config()
 
@@ -122,11 +130,12 @@ class TimeoutManager:
             "grace_period_minutes", startup_grace_period or 1
         )
         self.warning_minutes = self.config.get("warning_minutes", warning_minutes or 5)
+        self.track_usage = self.config.get("track_usage", track_usage or False)
 
         # Check for missing, 0, or -1 time limit and exit if necessary
-        if self.time_limit_minutes <= 0:
+        if self.time_limit_minutes <= 0 and not self.track_usage:
             logger.info(
-                "Daily time limit not set or disabled (time_limit_minutes <= 0). Exiting."
+                "Daily time limit not set or disabled (time_limit_minutes <= 0) and track_usage is False. Exiting."
             )
             sys.exit(0)
 
@@ -156,6 +165,7 @@ class TimeoutManager:
             else 0,
             "grace_period_minutes": 1,
             "warning_minutes": 5,
+            "track_usage": False,
             "usage": {today: 0},  # Minutes used today
             "last_update": datetime.now().isoformat(),
         }
@@ -434,14 +444,6 @@ def main():
         ),
     )
     parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help=_(
-            "Path to the configuration file (default: ~/.config/kutimeout/config.json)"
-        ),
-    )
-    parser.add_argument(
         "--grace-period",
         type=int,
         default=1,
@@ -456,9 +458,23 @@ def main():
         help=_("Minutes before logout to show a warning notification (default: 5)"),
     )
     parser.add_argument(
+        "--track-usage",
+        action="store_true",
+        default=None,
+        help=_("Keep the service running and track usage even if no time limit is set"),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help=_("Enable detailed logging for troubleshooting"),
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help=_(
+            "Path to the configuration file (default: ~/.config/kutimeout/config.json)"
+        ),
     )
     parser.add_argument(
         "--save",
@@ -485,6 +501,7 @@ def main():
         config_file=args.config,
         startup_grace_period=args.grace_period,
         warning_minutes=args.warning_minutes,
+        track_usage=args.track_usage,
     )
 
     if args.save:

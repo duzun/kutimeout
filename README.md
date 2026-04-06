@@ -54,6 +54,9 @@ kutimeout --time-limit 120 --verbose
 # Change the time limit in the configuration and exit without running the service
 kutimeout --time-limit 120 --save
 
+# Enable background usage tracking without a time limit
+kutimeout --track-usage --save
+
 # Use a specific configuration file
 kutimeout --config ~/my_limits.json
 ```
@@ -65,6 +68,7 @@ The script stores its configuration in `~/.config/kutimeout/config.json`. **By d
 Key configuration options:
 
 - `time_limit_minutes`: The daily allowance in minutes. Set to a positive value (e.g., 120 for 2 hours) to enable the limit.
+- `track_usage`: If `true`, the service will track usage even if `time_limit_minutes` is 0.
 - `grace_period_minutes`: Minimum minutes to wait after startup before enforcing logout.
 - `warning_minutes`: Minutes before logout to show a warning notification.
 - `usage`: Tracks minutes used per day.
