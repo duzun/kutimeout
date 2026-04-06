@@ -11,6 +11,7 @@ WARNING! No work is saved automatically when logging out. You can lose date. Use
 - **Smart Warning**: Always gives at least a 5-minute warning before logout, even if the limit is reached unexpectedly.
 - **Screen Lock Detection**: Pauses the usage timer when the screen is locked.
 - **CLI Overrides**: Easily change the time limit from the command line.
+- **Inactive by Default**: Exits silently if no time limit is set.
 - Persists usage data between sessions and resets daily.
 - Verbose logging for easy troubleshooting.
 
@@ -50,17 +51,20 @@ kutimeout
 # Run with a custom 2-hour limit and verbose logging
 kutimeout --time-limit 120 --verbose
 
+# Change the time limit in the configuration and exit without running the service
+kutimeout --time-limit 120 --save
+
 # Use a specific configuration file
 kutimeout --config ~/my_limits.json
 ```
 
 ## Configuration
 
-The script stores its configuration in `~/.config/kutimeout/config.json`.
+The script stores its configuration in `~/.config/kutimeout/config.json`. **By default, `time_limit_minutes` is set to 0, which means the script will exit immediately without tracking time.**
 
 Key configuration options:
 
-- `time_limit_minutes`: The daily allowance.
+- `time_limit_minutes`: The daily allowance in minutes. Set to a positive value (e.g., 120 for 2 hours) to enable the limit.
 - `usage`: Tracks minutes used per day.
 - `last_update`: Timestamp of the last usage update.
 

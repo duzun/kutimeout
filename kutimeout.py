@@ -93,13 +93,16 @@ class TimeoutManager:
                 self.config["time_limit_minutes"] = self.cli_time_limit
                 self.save_config()
 
-        # Ensure we have a time_limit_minutes in config (fallback to 60)
-        if "time_limit_minutes" not in self.config:
-            self.config["time_limit_minutes"] = 60
-            self.save_config()
+        # Check for missing, 0, or -1 time limit and exit if necessary
+        time_limit = self.config.get("time_limit_minutes")
+        if time_limit is None or time_limit <= 0:
+            logger.info(
+                "Daily time limit not set or disabled (time_limit_minutes <= 0). Exiting."
+            )
+            sys.exit(0)
 
         # Set the effective time limit
-        self.time_limit_minutes = self.config["time_limit_minutes"]
+        self.time_limit_minutes = time_limit
 
         # Set up signal handlers for clean shutdown
         signal.signal(signal.SIGINT, self.handle_signal)
@@ -124,7 +127,7 @@ class TimeoutManager:
         config = {
             "time_limit_minutes": self.cli_time_limit
             if self.cli_time_limit is not None
-            else 60,
+            else 0,
             "usage": {today: 0},  # Minutes used today
             "last_update": datetime.now().isoformat(),
         }
@@ -420,6 +423,11 @@ def main():
     parser.add_argument(
         "--verbose", action="store_true", help=_("Enable verbose logging")
     )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help=_("Save CLI arguments to configuration file and exit"),
+    )
 
     args = parser.parse_args()
 
@@ -439,6 +447,10 @@ def main():
         startup_grace_period=args.grace_period,
         warning_minutes=args.warning_minutes,
     )
+
+    if args.save:
+        logger.info(f"Configuration saved to {timeout_manager.config_file}. Exiting.")
+        sys.exit(0)
 
     timeout_manager.run()
 

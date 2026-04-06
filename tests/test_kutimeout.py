@@ -34,6 +34,18 @@ class TestTimeoutManager(unittest.TestCase):
             self.assertEqual(config["time_limit_minutes"], 60)
 
     @patch("subprocess.run")
+    def test_exit_on_zero_limit(self, mock_run):
+        """Test that the manager exits when the time limit is 0 or not set."""
+        with self.assertRaises(SystemExit):
+            TimeoutManager(time_limit_minutes=0, config_file=self.temp_config)
+
+        if self.temp_config.exists():
+            self.temp_config.unlink()
+
+        with self.assertRaises(SystemExit):
+            TimeoutManager(time_limit_minutes=-1, config_file=self.temp_config)
+
+    @patch("subprocess.run")
     def test_cli_override(self, mock_run):
         """Test that CLI arguments override the config file."""
         # Create an existing config with 30 minutes
