@@ -15,13 +15,18 @@ class TestTimeoutManager(unittest.TestCase):
     def setUp(self):
         """Setup a temporary config file for testing."""
         self.temp_config = Path("/tmp/test_kutimeout_config.json")
+        self.temp_usage = self.temp_config.parent / "usage.json"
         if self.temp_config.exists():
             self.temp_config.unlink()
+        if self.temp_usage.exists():
+            self.temp_usage.unlink()
 
     def tearDown(self):
         """Cleanup the temporary config file."""
         if self.temp_config.exists():
             self.temp_config.unlink()
+        if self.temp_usage.exists():
+            self.temp_usage.unlink()
 
     @patch("subprocess.run")
     def test_initialization(self, mock_run):
@@ -55,7 +60,7 @@ class TestTimeoutManager(unittest.TestCase):
 
         # Simulate usage
         today = datetime.now().strftime("%Y-%m-%d")
-        tm.config["usage"][today] = 120.0
+        tm.usage_data["usage"][today] = 120.0
 
         # Still False and no warning
         self.assertFalse(tm.check_time_limit())
@@ -145,12 +150,12 @@ class TestTimeoutManager(unittest.TestCase):
 
         # Simulate usage at 54.9 minutes (5.1 minutes left, no warning yet)
         today = datetime.now().strftime("%Y-%m-%d")
-        tm.config["usage"][today] = 54.9
+        tm.usage_data["usage"][today] = 54.9
         self.assertFalse(tm.check_time_limit())
         self.assertFalse(tm.warning_shown)
 
         # Simulate usage at 55.1 minutes (4.9 minutes left, warning should trigger)
-        tm.config["usage"][today] = 55.1
+        tm.usage_data["usage"][today] = 55.1
         res = tm.check_time_limit()
 
         # check_time_limit should return False (it's only True when logout is immediate)
@@ -189,7 +194,7 @@ class TestTimeoutManager(unittest.TestCase):
         today = datetime.now().strftime("%Y-%m-%d")
 
         # 1. Trigger the warning (limit reached)
-        tm.config["usage"][today] = 10.1
+        tm.usage_data["usage"][today] = 10.1
         tm.check_time_limit()
         self.assertTrue(tm.warning_shown)
 
@@ -200,6 +205,35 @@ class TestTimeoutManager(unittest.TestCase):
         # 3. Simulate 3 minutes passing (exceeding the 2-minute warning period)
         tm.warning_shown_at = datetime.now() - timedelta(minutes=3)
         self.assertTrue(tm.check_time_limit())
+
+    @patch("subprocess.run")
+    def test_usage_migration(self, mock_run):
+        """Test that usage metrics are migrated from config.json to usage.json on first run."""
+        # Create a legacy config file containing usage data
+        legacy_data = {
+            "time_limit_minutes": 60,
+            "grace_period_minutes": 1,
+            "warning_minutes": 5,
+            "track_usage": False,
+            "usage": {"2026-06-22": 45.5},
+            "last_update": "2026-06-22T12:00:00"
+        }
+        with open(self.temp_config, "w") as f:
+            json.dump(legacy_data, f, indent=2)
+
+        # Initialize TimeoutManager
+        tm = TimeoutManager(config_file=self.temp_config)
+
+        # Verify that usage_data was loaded correctly
+        self.assertEqual(tm.usage_data["usage"]["2026-06-22"], 45.5)
+        self.assertEqual(tm.usage_data["last_update"], "2026-06-22T12:00:00")
+
+        # Verify that usage has been removed from config.json
+        with open(self.temp_config, "r") as f:
+            config = json.load(f)
+            self.assertNotIn("usage", config)
+            self.assertNotIn("last_update", config)
+            self.assertEqual(config["time_limit_minutes"], 60)
 
     @patch("subprocess.run")
     def test_logout_execution_safely(self, mock_run):

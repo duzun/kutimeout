@@ -9,12 +9,6 @@ AUTOSTART_DIR="$HOME/.config/autostart"
 
 echo "Starting $NAME installation..."
 
-# Run migration/cleanup if migrate.sh exists
-if [ -f "./migrate.sh" ]; then
-    chmod +x ./migrate.sh
-    ./migrate.sh
-fi
-
 # 1. Setup Autostart
 echo "Setting up autostart..."
 mkdir -p "$AUTOSTART_DIR"

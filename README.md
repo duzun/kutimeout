@@ -71,18 +71,21 @@ kutimeout -t -s
 | `-v` | `--verbose` | Enable detailed logging for troubleshooting. |
 | | `--help` | Show the help message and exit. |
 
-## Configuration
+## Configuration and State
 
-The script stores its configuration in `~/.config/kutimeout/config.json`. **By default, `time_limit_minutes` is set to 0, which means the script will exit immediately without tracking time.**
+The script separates user configuration settings from usage state tracking:
 
-Key configuration options:
+1. **Configuration Settings** (`~/.config/kutimeout/config.json`):
+   - `time_limit_minutes`: The daily allowance in minutes. Set to a positive value (e.g., 120 for 2 hours) to enable the limit, or `-1` to track time without logging out or notifications.
+   - `track_usage`: If `true`, the service will track usage even if `time_limit_minutes` is 0.
+   - `grace_period_minutes`: Minimum minutes to wait after startup before enforcing logout.
+   - `warning_minutes`: Minutes before logout to show a warning notification.
 
-- `time_limit_minutes`: The daily allowance in minutes. Set to a positive value (e.g., 120 for 2 hours) to enable the limit, or `-1` to track time without logging out or notifications.
-- `track_usage`: If `true`, the service will track usage even if `time_limit_minutes` is 0.
-- `grace_period_minutes`: Minimum minutes to wait after startup before enforcing logout.
-- `warning_minutes`: Minutes before logout to show a warning notification.
-- `usage`: Tracks minutes used per day.
-- `last_update`: Timestamp of the last usage update.
+2. **Usage Tracking State** (`~/.config/kutimeout/usage.json`):
+   - `usage`: Tracks minutes used per day (e.g., `{"2026-06-22": 45.5}`).
+   - `last_update`: Timestamp of the last usage update.
+
+**Note**: On upgrading from a legacy version, the script will automatically migrate any existing usage data from `config.json` to `usage.json` on its first run.
 
 ## Troubleshooting
 

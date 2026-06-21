@@ -79,6 +79,9 @@ class TimeoutManager:
         else:
             self.config_file = Path(config_file)
 
+        # Usage file is stored next to the config file
+        self.usage_file = self.config_file.parent / "usage.json"
+
         # Create config directory if it doesn't exist
         try:
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +91,9 @@ class TimeoutManager:
 
         # Load or create config
         self.config = self.load_config()
+
+        # Load or create usage
+        self.usage_data = self.load_usage()
 
         config_updated = False
 
@@ -155,6 +161,8 @@ class TimeoutManager:
             try:
                 with open(self.config_file, "r") as f:
                     config = json.load(f)
+                    # Handle migration from old version where usage was in config.json
+                    self.migrate_usage_if_needed(config)
                     return config
             except (json.JSONDecodeError, IOError) as e:
                 logger.error(f"Error loading config: {e}")
@@ -162,9 +170,87 @@ class TimeoutManager:
         else:
             return self.create_default_config()
 
+    def migrate_usage_if_needed(self, config):
+        """Migrate usage data from the configuration dictionary to a separate usage file."""
+        has_usage = "usage" in config
+        has_last_update = "last_update" in config
+        if has_usage or has_last_update:
+            logger.info("Migrating usage metrics from config.json to usage.json...")
+
+            # Load existing usage file if it exists, or create a new dict
+            usage_data = {}
+            if self.usage_file.exists():
+                try:
+                    with open(self.usage_file, "r") as f:
+                        usage_data = json.load(f)
+                except (json.JSONDecodeError, IOError) as e:
+                    logger.error(f"Error loading existing usage.json: {e}")
+
+            # Migrate usage dict
+            if has_usage:
+                if "usage" not in usage_data:
+                    usage_data["usage"] = {}
+                for date, val in config["usage"].items():
+                    if date not in usage_data["usage"]:
+                        usage_data["usage"][date] = val
+                del config["usage"]
+
+            # Migrate last_update
+            if has_last_update:
+                if "last_update" not in usage_data:
+                    usage_data["last_update"] = config["last_update"]
+                del config["last_update"]
+
+            # Save usage file
+            self.save_usage(usage_data)
+
+            # Save config back to remove the usage fields
+            try:
+                with open(self.config_file, "w") as f:
+                    json.dump(config, f, indent=2)
+            except IOError as e:
+                logger.error(f"Error saving migrated config: {e}")
+
+    def load_usage(self):
+        """Load usage metrics from file or create default if it doesn't exist."""
+        if self.usage_file.exists():
+            try:
+                with open(self.usage_file, "r") as f:
+                    usage_data = json.load(f)
+                    if "usage" not in usage_data:
+                        usage_data["usage"] = {}
+                    if "last_update" not in usage_data:
+                        usage_data["last_update"] = datetime.now().isoformat()
+                    return usage_data
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error(f"Error loading usage: {e}")
+                return self.create_default_usage()
+        else:
+            return self.create_default_usage()
+
+    def create_default_usage(self):
+        """Create default usage data."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        usage_data = {
+            "usage": {today: 0},
+            "last_update": datetime.now().isoformat(),
+        }
+        self.save_usage(usage_data)
+        return usage_data
+
+    def save_usage(self, usage_data=None):
+        """Save the current usage data to file."""
+        if usage_data is None:
+            usage_data = self.usage_data
+
+        try:
+            with open(self.usage_file, "w") as f:
+                json.dump(usage_data, f, indent=2)
+        except IOError as e:
+            logger.error(f"Error saving usage: {e}")
+
     def create_default_config(self):
         """Create a default configuration."""
-        today = datetime.now().strftime("%Y-%m-%d")
         config = {
             "time_limit_minutes": self.cli_time_limit
             if self.cli_time_limit is not None
@@ -172,8 +258,6 @@ class TimeoutManager:
             "grace_period_minutes": 1,
             "warning_minutes": 5,
             "track_usage": False,
-            "usage": {today: 0},  # Minutes used today
-            "last_update": datetime.now().isoformat(),
         }
         self.save_config(config)
         return config
@@ -238,28 +322,33 @@ class TimeoutManager:
         now = datetime.now()
         locked = self.is_screen_locked()
 
-        # First read the current configuration from file to get any external changes
-        current_config = {}
-        if self.config_file.exists():
+    def update_usage(self):
+        """Update the usage time in the usage file. Skips counting when screen is locked."""
+        now = datetime.now()
+        locked = self.is_screen_locked()
+
+        # First read the current usage from file to get any external changes
+        current_usage_data = {}
+        if self.usage_file.exists():
             try:
-                with open(self.config_file, "r") as f:
-                    current_config = json.load(f)
+                with open(self.usage_file, "r") as f:
+                    current_usage_data = json.load(f)
             except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"Error loading current config: {e}")
-                # If we can't read the current config, use the in-memory one
-                current_config = self.config
+                logger.error(f"Error loading current usage: {e}")
+                # If we can't read the current usage, use the in-memory one
+                current_usage_data = self.usage_data
         else:
-            current_config = self.config
+            current_usage_data = self.usage_data
 
         today = now.strftime("%Y-%m-%d")
 
-        # Ensure 'usage' exists in both configs
-        if "usage" not in current_config:
-            current_config["usage"] = {}
+        # Ensure 'usage' exists in current_usage_data
+        if "usage" not in current_usage_data:
+            current_usage_data["usage"] = {}
 
-        # Initialize today's usage if not present in current config
-        if today not in current_config["usage"]:
-            current_config["usage"][today] = 0
+        # Initialize today's usage if not present in current usage
+        if today not in current_usage_data["usage"]:
+            current_usage_data["usage"][today] = 0
 
         # Calculate time elapsed since last update
         elapsed_minutes = (now - self.last_update).total_seconds() / 60
@@ -275,24 +364,24 @@ class TimeoutManager:
 
         # Only count time when the screen is NOT locked
         if not locked:
-            current_config["usage"][today] += elapsed_minutes
+            current_usage_data["usage"][today] += elapsed_minutes
         else:
             logger.debug(f"Screen locked — not counting {elapsed_minutes:.1f} min")
 
-        current_config["last_update"] = now.isoformat()
+        current_usage_data["last_update"] = now.isoformat()
 
-        # Update in-memory config with the updated values
-        self.config = current_config
+        # Update in-memory usage with the updated values
+        self.usage_data = current_usage_data
 
-        # Save updated config
-        self.save_config(current_config)
+        # Save updated usage
+        self.save_usage(current_usage_data)
 
-        return self.config["usage"][today]
+        return self.usage_data["usage"][today]
 
     def get_remaining_minutes(self):
         """Get the remaining minutes for today."""
         today = datetime.now().strftime("%Y-%m-%d")
-        current_usage = self.config.get("usage", {}).get(today, 0)
+        current_usage = self.usage_data.get("usage", {}).get(today, 0)
         return (
             self.config.get("time_limit_minutes", self.time_limit_minutes)
             - current_usage
@@ -310,11 +399,11 @@ class TimeoutManager:
         today = datetime.now().strftime("%Y-%m-%d")
 
         # Initialize today's usage if not present
-        if today not in self.config.get("usage", {}):
-            if "usage" not in self.config:
-                self.config["usage"] = {}
-            self.config["usage"][today] = 0
-            self.save_config()
+        if today not in self.usage_data.get("usage", {}):
+            if "usage" not in self.usage_data:
+                self.usage_data["usage"] = {}
+            self.usage_data["usage"][today] = 0
+            self.save_usage()
             return False
 
         remaining = self.get_remaining_minutes()
