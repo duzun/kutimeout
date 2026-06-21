@@ -62,7 +62,7 @@ kutimeout -t -s
 
 | Short | Long | Description |
 |-------|------|-------------|
-| `-l` | `--time-limit` | Daily time limit in minutes. Use `0` to disable. |
+| `-l` | `--time-limit` | Daily time limit in minutes. Use `0` to disable, or `-1` to track time without logging out or notifications. |
 | `-t` | `--track-usage` | Track usage even if no time limit is set. |
 | `-s` | `--save` | Update the configuration file and exit immediately. |
 | `-g` | `--grace-period` | Minimum minutes to wait after startup before logout. |
@@ -77,7 +77,7 @@ The script stores its configuration in `~/.config/kutimeout/config.json`. **By d
 
 Key configuration options:
 
-- `time_limit_minutes`: The daily allowance in minutes. Set to a positive value (e.g., 120 for 2 hours) to enable the limit.
+- `time_limit_minutes`: The daily allowance in minutes. Set to a positive value (e.g., 120 for 2 hours) to enable the limit, or `-1` to track time without logging out or notifications.
 - `track_usage`: If `true`, the service will track usage even if `time_limit_minutes` is 0.
 - `grace_period_minutes`: Minimum minutes to wait after startup before enforcing logout.
 - `warning_minutes`: Minutes before logout to show a warning notification.

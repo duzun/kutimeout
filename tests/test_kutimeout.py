@@ -41,13 +41,25 @@ class TestTimeoutManager(unittest.TestCase):
                 time_limit_minutes=0, config_file=self.temp_config, track_usage=False
             )
 
-        if self.temp_config.exists():
-            self.temp_config.unlink()
+    @patch("subprocess.run")
+    def test_time_limit_minus_one(self, mock_run):
+        """Test that time_limit_minutes == -1 does not exit, tracks time, and doesn't logout/notify."""
+        tm = TimeoutManager(
+            time_limit_minutes=-1, config_file=self.temp_config, track_usage=False
+        )
+        self.assertEqual(tm.time_limit_minutes, -1)
 
-        with self.assertRaises(SystemExit):
-            TimeoutManager(
-                time_limit_minutes=-1, config_file=self.temp_config, track_usage=False
-            )
+        # check_time_limit should return False (no logout)
+        self.assertFalse(tm.check_time_limit())
+        self.assertFalse(tm.warning_shown)
+
+        # Simulate usage
+        today = datetime.now().strftime("%Y-%m-%d")
+        tm.config["usage"][today] = 120.0
+
+        # Still False and no warning
+        self.assertFalse(tm.check_time_limit())
+        self.assertFalse(tm.warning_shown)
 
     @patch("subprocess.run")
     def test_track_usage_no_limit(self, mock_run):

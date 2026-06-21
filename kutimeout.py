@@ -134,10 +134,11 @@ class TimeoutManager:
         self.warning_minutes = self.config.get("warning_minutes", warning_minutes or 5)
         self.track_usage = self.config.get("track_usage", track_usage or False)
 
-        # Check for missing, 0, or -1 time limit and exit if necessary
-        if self.time_limit_minutes <= 0 and not self.track_usage:
+        # Check for missing or 0 time limit and exit if necessary
+        # When time_limit_minutes == -1, it should track time, but not logout, nor show the logout notification.
+        if (self.time_limit_minutes is None or self.time_limit_minutes == 0) and not self.track_usage:
             logger.info(
-                "Daily time limit not set or disabled (time_limit_minutes <= 0) and track_usage is False. Exiting."
+                "Daily time limit not set or disabled (time_limit_minutes == 0) and track_usage is False. Exiting."
             )
             sys.exit(0)
 
@@ -291,6 +292,10 @@ class TimeoutManager:
 
         Returns True only when it's time to actually log out (after warning period).
         """
+        # When time_limit_minutes == -1, it should track time, but not logout, nor show the logout notification.
+        if self.config.get("time_limit_minutes", self.time_limit_minutes) == -1:
+            return False
+
         today = datetime.now().strftime("%Y-%m-%d")
 
         # Initialize today's usage if not present
@@ -398,7 +403,8 @@ class TimeoutManager:
 
                 # Check if time limit is reached (handles warnings + grace)
                 if self.check_time_limit():
-                    logger.info(f"Time limit of {time_limit} minutes reached.")
+                    current_time_limit = self.config.get("time_limit_minutes", self.time_limit_minutes)
+                    logger.info(f"Time limit of {current_time_limit} minutes reached.")
                     logger.info(f"Total usage today: {current_usage:.2f} minutes")
                     self.notify_user(
                         _("Logging Out"),
@@ -409,15 +415,21 @@ class TimeoutManager:
                     break
 
                 # Calculate and display remaining time
-                remaining = self.get_remaining_minutes()
-                logger.info(
-                    f"Time used: {current_usage:.1f} min. Remaining: {remaining:.1f} min"
-                )
+                current_time_limit = self.config.get("time_limit_minutes", self.time_limit_minutes)
+                if current_time_limit == -1:
+                    logger.info(
+                        f"Time used: {current_usage:.1f} min. (No limit enforced)"
+                    )
+                else:
+                    remaining = self.get_remaining_minutes()
+                    logger.info(
+                        f"Time used: {current_usage:.1f} min. Remaining: {remaining:.1f} min"
+                    )
 
                 # Poll more frequently when close to limit or during warning period
                 if self.warning_shown:
                     time.sleep(15)
-                elif remaining <= self.warning_minutes + 1:
+                elif current_time_limit != -1 and remaining <= self.warning_minutes + 1:
                     time.sleep(30)
                 else:
                     time.sleep(60)
@@ -443,7 +455,7 @@ def main():
         type=int,
         default=None,
         help=_(
-            "Daily time limit in minutes. Use 0 to disable. (default: 0 or from config)"
+            "Daily time limit in minutes. Use 0 to disable, or -1 to track time without logging out or notifications. (default: 0 or from config)"
         ),
     )
     parser.add_argument(
