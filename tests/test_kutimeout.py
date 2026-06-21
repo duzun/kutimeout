@@ -94,12 +94,12 @@ class TestTimeoutManager(unittest.TestCase):
 
         tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
 
-        # Manually manipulate last_update to simulate 10 minutes passing
-        tm.last_update = datetime.now() - timedelta(minutes=10)
+        # Manually manipulate last_update to simulate 3 minutes passing
+        tm.last_update = datetime.now() - timedelta(minutes=3)
 
         usage = tm.update_usage()
-        # Should be roughly 10 minutes (using almostEqual due to slight timing diffs)
-        self.assertAlmostEqual(usage, 10.0, places=1)
+        # Should be roughly 3 minutes (using almostEqual due to slight timing diffs)
+        self.assertAlmostEqual(usage, 3.0, places=1)
 
     @patch("subprocess.run")
     def test_update_usage_locked(self, mock_run):
@@ -109,10 +109,31 @@ class TestTimeoutManager(unittest.TestCase):
 
         tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
 
-        # Simulating 10 minutes passing while screen is locked
+        # Simulating 3 minutes passing while screen is locked
+        tm.last_update = datetime.now() - timedelta(minutes=3)
+
+        usage = tm.update_usage()
+        self.assertEqual(usage, 0.0)
+
+    @patch("subprocess.run")
+    def test_time_jump_detection(self, mock_run):
+        """Test that time jumps (e.g. system suspend or backward clock sync) are detected and ignored."""
+        # Mock qdbus screen lock check to return false
+        mock_run.return_value.stdout = "false"
+
+        tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
+
+        # Simulate a 10-minute jump (exceeding MAX_POLL_GAP_MINUTES)
         tm.last_update = datetime.now() - timedelta(minutes=10)
 
         usage = tm.update_usage()
+        # The jump should be ignored, so usage remains 0
+        self.assertEqual(usage, 0.0)
+
+        # Simulate a negative time jump (clock set backwards)
+        tm.last_update = datetime.now() + timedelta(minutes=5)
+        usage = tm.update_usage()
+        # The negative jump should be ignored, so usage remains 0
         self.assertEqual(usage, 0.0)
 
     @patch("subprocess.run")

@@ -45,6 +45,9 @@ logger = logging.getLogger("kutimeout")
 
 
 class TimeoutManager:
+    # Maximum allowed gap between updates in minutes before assuming a time jump (suspend/clock sync)
+    MAX_POLL_GAP_MINUTES = 5.0
+
     def __init__(
         self,
         time_limit_minutes=None,
@@ -261,6 +264,14 @@ class TimeoutManager:
         # Calculate time elapsed since last update
         elapsed_minutes = (now - self.last_update).total_seconds() / 60
         self.last_update = now
+
+        # Detect suspended/wake up system or time jumps (including negative clock adjustments)
+        if elapsed_minutes > self.MAX_POLL_GAP_MINUTES or elapsed_minutes < 0:
+            logger.info(
+                f"Time jump/clock change detected ({elapsed_minutes:.1f} min). "
+                f"Assuming system suspend or clock sync; ignoring this interval."
+            )
+            elapsed_minutes = 0.0
 
         # Only count time when the screen is NOT locked
         if not locked:
