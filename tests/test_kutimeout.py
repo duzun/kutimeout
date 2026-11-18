@@ -1,251 +1,196 @@
 import json
+import logging
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-# Import the class (add current dir to path if needed)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import kutimeout
 from kutimeout import TimeoutManager
+
+logging.disable(logging.CRITICAL)  # keep test output clean
 
 
 class TestTimeoutManager(unittest.TestCase):
     def setUp(self):
-        """Setup a temporary config file for testing."""
-        self.temp_config = Path("/tmp/test_kutimeout_config.json")
-        self.temp_usage = self.temp_config.parent / "usage.json"
-        if self.temp_config.exists():
-            self.temp_config.unlink()
-        if self.temp_usage.exists():
-            self.temp_usage.unlink()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cfg = Path(tmp.name) / "config.json"
+        self.usage_file = Path(tmp.name) / "usage.json"
+        self.locked = "false"
+        self.fail_commands = set()  # command args whose subprocess.run raises
 
-    def tearDown(self):
-        """Cleanup the temporary config file."""
-        if self.temp_config.exists():
-            self.temp_config.unlink()
-        if self.temp_usage.exists():
-            self.temp_usage.unlink()
+        patcher = patch.object(kutimeout.subprocess, "run", side_effect=self._run)
+        self.run = patcher.start()
+        self.addCleanup(patcher.stop)
 
-    @patch("subprocess.run")
-    def test_initialization(self, mock_run):
-        """Test default initialization and config creation."""
-        tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
-        self.assertEqual(tm.time_limit_minutes, 60)
-        self.assertTrue(self.temp_config.exists())
-        with open(self.temp_config, "r") as f:
-            config = json.load(f)
-            self.assertEqual(config["time_limit_minutes"], 60)
+    def _run(self, cmd, **kwargs):
+        if cmd[1] in self.fail_commands:
+            raise subprocess.CalledProcessError(1, cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = self.locked
+        return result
 
-    @patch("subprocess.run")
-    def test_exit_on_zero_limit(self, mock_run):
-        """Test that the manager exits when the time limit is 0 and track_usage is False."""
-        with self.assertRaises(SystemExit):
-            TimeoutManager(
-                time_limit_minutes=0, config_file=self.temp_config, track_usage=False
-            )
+    def make(self, **kw):
+        kw.setdefault("startup_grace_period", 0)
+        return TimeoutManager(config_file=self.cfg, **kw)
 
-    @patch("subprocess.run")
-    def test_time_limit_minus_one(self, mock_run):
-        """Test that time_limit_minutes == -1 does not exit, tracks time, and doesn't logout/notify."""
-        tm = TimeoutManager(
-            time_limit_minutes=-1, config_file=self.temp_config, track_usage=False
-        )
-        self.assertEqual(tm.time_limit_minutes, -1)
+    def read(self, path):
+        return json.loads(path.read_text())
 
-        # check_time_limit should return False (no logout)
-        self.assertFalse(tm.check_time_limit())
-        self.assertFalse(tm.warning_shown)
+    def today(self):
+        return datetime.now().strftime("%Y-%m-%d")
 
-        # Simulate usage
-        today = datetime.now().strftime("%Y-%m-%d")
-        tm.usage_data["usage"][today] = 120.0
+    def set_usage(self, minutes):
+        self.usage_file.write_text(json.dumps({"usage": {self.today(): minutes}}))
 
-        # Still False and no warning
-        self.assertFalse(tm.check_time_limit())
-        self.assertFalse(tm.warning_shown)
+    def commands(self, name):
+        return [c.args[0] for c in self.run.call_args_list if c.args[0][0] == name]
 
-    @patch("subprocess.run")
-    def test_track_usage_no_limit(self, mock_run):
-        """Test that the manager DOES NOT exit when the time limit is 0 but track_usage is True."""
-        tm = TimeoutManager(
-            time_limit_minutes=0, config_file=self.temp_config, track_usage=True
-        )
-        self.assertEqual(tm.time_limit_minutes, 0)
-        self.assertTrue(tm.track_usage)
+    def check(self, tm):
+        tm.update_usage()  # like the main loop: refresh usage, then check
+        return tm.check_time_limit()
 
-    @patch("subprocess.run")
-    def test_cli_override(self, mock_run):
-        """Test that CLI arguments override the config file."""
-        # Create an existing config with 30 minutes
-        with open(self.temp_config, "w") as f:
-            json.dump({"time_limit_minutes": 30, "usage": {}}, f)
+    # --- configuration ---
 
-        # Initialize with 120 minutes via CLI
-        tm = TimeoutManager(time_limit_minutes=120, config_file=self.temp_config)
+    def test_new_config_gets_defaults_and_cli_limit(self):
+        TimeoutManager(config_file=self.cfg, time_limit_minutes=60)
+        cfg = self.read(self.cfg)
+        self.assertEqual(cfg["time_limit_minutes"], 60)
+        self.assertEqual(cfg["grace_period_minutes"], 1)
+        self.assertEqual(cfg["warning_minutes"], 5)
+        self.assertFalse(cfg["track_usage"])
+
+    def test_cli_limit_overrides_and_persists(self):
+        self.cfg.write_text(json.dumps({"time_limit_minutes": 30}))
+        tm = self.make(time_limit_minutes=120)
         self.assertEqual(tm.time_limit_minutes, 120)
+        self.assertEqual(self.read(self.cfg)["time_limit_minutes"], 120)
 
-        # Verify config file was updated
-        with open(self.temp_config, "r") as f:
-            config = json.load(f)
-            self.assertEqual(config["time_limit_minutes"], 120)
+    def test_save_keeps_other_settings_from_config(self):
+        self.cfg.write_text(json.dumps({"grace_period_minutes": 7, "warning_minutes": 9}))
+        with self.assertRaises(SystemExit) as cm:
+            kutimeout.main(["-c", str(self.cfg), "-l", "30", "-s"])
+        self.assertEqual(cm.exception.code, 0)
+        cfg = self.read(self.cfg)
+        self.assertEqual(
+            (cfg["time_limit_minutes"], cfg["grace_period_minutes"], cfg["warning_minutes"]),
+            (30, 7, 9),
+        )
 
-    @patch("subprocess.run")
-    def test_update_usage_not_locked(self, mock_run):
-        """Test usage tracking when screen is NOT locked."""
-        # Mock qdbus screen lock check to return false
-        mock_run.return_value.stdout = "false"
+    def test_enabled(self):
+        self.assertFalse(self.make(time_limit_minutes=0).enabled)
+        self.assertTrue(self.make(time_limit_minutes=0, track_usage=True).enabled)
+        self.assertTrue(self.make(time_limit_minutes=-1, track_usage=False).enabled)
+        self.assertTrue(self.make(time_limit_minutes=60, track_usage=False).enabled)
 
-        tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
+    # --- usage tracking ---
 
-        # Manually manipulate last_update to simulate 3 minutes passing
+    def test_unlocked_time_is_counted_and_saved(self):
+        tm = self.make(time_limit_minutes=60)
         tm.last_update = datetime.now() - timedelta(minutes=3)
+        self.assertAlmostEqual(tm.update_usage(), 3.0, places=1)
+        self.assertAlmostEqual(self.read(self.usage_file)["usage"][self.today()], 3.0, places=1)
 
-        usage = tm.update_usage()
-        # Should be roughly 3 minutes (using almostEqual due to slight timing diffs)
-        self.assertAlmostEqual(usage, 3.0, places=1)
-
-    @patch("subprocess.run")
-    def test_update_usage_locked(self, mock_run):
-        """Test that usage is NOT counted when screen is locked."""
-        # Mock qdbus screen lock check to return true
-        mock_run.return_value.stdout = "true"
-
-        tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
-
-        # Simulating 3 minutes passing while screen is locked
+    def test_locked_time_is_not_counted(self):
+        self.locked = "true"
+        tm = self.make(time_limit_minutes=60)
         tm.last_update = datetime.now() - timedelta(minutes=3)
+        self.assertEqual(tm.update_usage(), 0.0)
 
-        usage = tm.update_usage()
-        self.assertEqual(usage, 0.0)
+    def test_time_jumps_are_ignored(self):
+        tm = self.make(time_limit_minutes=60)
+        tm.last_update = datetime.now() - timedelta(minutes=10)  # suspend
+        self.assertEqual(tm.update_usage(), 0.0)
+        tm.last_update = datetime.now() + timedelta(minutes=5)  # clock set back
+        self.assertEqual(tm.update_usage(), 0.0)
 
-    @patch("subprocess.run")
-    def test_time_jump_detection(self, mock_run):
-        """Test that time jumps (e.g. system suspend or backward clock sync) are detected and ignored."""
-        # Mock qdbus screen lock check to return false
-        mock_run.return_value.stdout = "false"
+    def test_external_usage_edit_is_picked_up(self):
+        tm = self.make(time_limit_minutes=60)
+        self.set_usage(40)
+        self.assertAlmostEqual(tm.update_usage(), 40.0, places=1)
 
-        tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
+    # --- warning and logout ---
 
-        # Simulate a 10-minute jump (exceeding MAX_POLL_GAP_MINUTES)
-        tm.last_update = datetime.now() - timedelta(minutes=10)
+    def test_warning_only_inside_warning_window(self):
+        tm = self.make(time_limit_minutes=60, warning_minutes=5)
+        self.set_usage(54)
+        self.assertFalse(self.check(tm))
+        self.assertEqual(self.commands("notify-send"), [])
 
-        usage = tm.update_usage()
-        # The jump should be ignored, so usage remains 0
-        self.assertEqual(usage, 0.0)
+        self.set_usage(56)
+        self.assertFalse(self.check(tm))
+        self.assertEqual(len(self.commands("notify-send")), 1)
 
-        # Simulate a negative time jump (clock set backwards)
-        tm.last_update = datetime.now() + timedelta(minutes=5)
-        usage = tm.update_usage()
-        # The negative jump should be ignored, so usage remains 0
-        self.assertEqual(usage, 0.0)
+        self.assertFalse(self.check(tm))  # warned once only
+        self.assertEqual(len(self.commands("notify-send")), 1)
 
-    @patch("subprocess.run")
-    def test_warning_logic(self, mock_run):
-        """Test that the warning is triggered exactly 5 minutes before the limit."""
-        tm = TimeoutManager(
-            time_limit_minutes=60, config_file=self.temp_config, startup_grace_period=0
-        )
-
-        # Simulate usage at 54.9 minutes (5.1 minutes left, no warning yet)
-        today = datetime.now().strftime("%Y-%m-%d")
-        tm.usage_data["usage"][today] = 54.9
-        self.assertFalse(tm.check_time_limit())
-        self.assertFalse(tm.warning_shown)
-
-        # Simulate usage at 55.1 minutes (4.9 minutes left, warning should trigger)
-        tm.usage_data["usage"][today] = 55.1
-        res = tm.check_time_limit()
-
-        # check_time_limit should return False (it's only True when logout is immediate)
-        self.assertFalse(res)
-        self.assertTrue(tm.warning_shown)
-        self.assertIsNotNone(tm.warning_shown_at)
-
-        # Verify notification was "sent" (mocked)
-        mock_run.assert_any_call(
-            [
-                "notify-send",
-                "-u",
-                "critical",
-                "-t",
-                "30000",
-                "-a",
-                "KUTimeout",
-                unittest.mock.ANY,
-                unittest.mock.ANY,
-            ],
-            check=False,
-            timeout=5,
-        )
-
-    @patch("subprocess.run")
-    def test_logout_trigger(self, mock_run):
-        """Test that logout is triggered ONLY after warning period elapses."""
-        # Set warning to 2 minutes for quicker test simulation
-        tm = TimeoutManager(
-            time_limit_minutes=10,
-            config_file=self.temp_config,
-            warning_minutes=2,
-            startup_grace_period=0,
-        )
-
-        today = datetime.now().strftime("%Y-%m-%d")
-
-        # 1. Trigger the warning (limit reached)
-        tm.usage_data["usage"][today] = 10.1
-        tm.check_time_limit()
-        self.assertTrue(tm.warning_shown)
-
-        # 2. Check immediately - should NOT logout yet
-        tm.warning_shown_at = datetime.now()
-        self.assertFalse(tm.check_time_limit())
-
-        # 3. Simulate 3 minutes passing (exceeding the 2-minute warning period)
+    def test_logout_only_after_limit_and_warning_period(self):
+        tm = self.make(time_limit_minutes=10, warning_minutes=2)
+        self.set_usage(10.1)
+        self.assertFalse(self.check(tm))  # warning shown now
+        self.assertFalse(self.check(tm))  # warning period not elapsed
         tm.warning_shown_at = datetime.now() - timedelta(minutes=3)
-        self.assertTrue(tm.check_time_limit())
+        self.assertTrue(self.check(tm))
 
-    @patch("subprocess.run")
-    def test_usage_migration(self, mock_run):
-        """Test that usage metrics are migrated from config.json to usage.json on first run."""
-        # Create a legacy config file containing usage data
-        legacy_data = {
+    def test_no_logout_before_limit_even_after_warning_period(self):
+        tm = self.make(time_limit_minutes=60, warning_minutes=5)
+        self.set_usage(57)
+        self.check(tm)
+        tm.warning_shown_at = datetime.now() - timedelta(minutes=10)
+        self.assertFalse(self.check(tm))
+
+    def test_grace_period_blocks_logout(self):
+        tm = self.make(time_limit_minutes=10, warning_minutes=2, startup_grace_period=5)
+        self.set_usage(100)
+        self.assertFalse(self.check(tm))
+        self.assertEqual(self.commands("notify-send"), [])
+
+    def test_unlimited_modes_never_warn_or_logout(self):
+        for limit, track in ((-1, False), (0, True)):
+            with self.subTest(limit=limit, track=track):
+                self.run.reset_mock()
+                tm = self.make(time_limit_minutes=limit, track_usage=track)
+                self.set_usage(10000)
+                tm.warning_shown_at = datetime.now() - timedelta(minutes=60)
+                self.assertFalse(self.check(tm))
+                self.assertEqual(self.commands("notify-send"), [])
+
+    # --- migration ---
+
+    def test_usage_migrated_from_legacy_config(self):
+        self.cfg.write_text(json.dumps({
             "time_limit_minutes": 60,
-            "grace_period_minutes": 1,
-            "warning_minutes": 5,
-            "track_usage": False,
-            "usage": {"2026-06-22": 45.5},
-            "last_update": "2026-06-22T12:00:00"
-        }
-        with open(self.temp_config, "w") as f:
-            json.dump(legacy_data, f, indent=2)
+            "usage": {"2026-06-22": 45.5, "2026-06-21": 1},
+            "last_update": "2026-06-22T12:00:00",
+        }))
+        self.usage_file.write_text(json.dumps({"usage": {"2026-06-21": 99}}))
+        self.make()
+        cfg = self.read(self.cfg)
+        self.assertEqual(cfg["time_limit_minutes"], 60)
+        self.assertNotIn("usage", cfg)
+        self.assertNotIn("last_update", cfg)
+        usage = self.read(self.usage_file)["usage"]
+        self.assertEqual(usage["2026-06-22"], 45.5)
+        self.assertEqual(usage["2026-06-21"], 99)  # existing usage.json wins
 
-        # Initialize TimeoutManager
-        tm = TimeoutManager(config_file=self.temp_config)
+    # --- logout command ---
 
-        # Verify that usage_data was loaded correctly
-        self.assertEqual(tm.usage_data["usage"]["2026-06-22"], 45.5)
-        self.assertEqual(tm.usage_data["last_update"], "2026-06-22T12:00:00")
-
-        # Verify that usage has been removed from config.json
-        with open(self.temp_config, "r") as f:
-            config = json.load(f)
-            self.assertNotIn("usage", config)
-            self.assertNotIn("last_update", config)
-            self.assertEqual(config["time_limit_minutes"], 60)
-
-    @patch("subprocess.run")
-    def test_logout_execution_safely(self, mock_run):
-        """Verify the logout command itself is correct, but mocked."""
-        tm = TimeoutManager(time_limit_minutes=60, config_file=self.temp_config)
-
-        tm.logout_user()
-
-        # Check that the KDE logout command was the one called
-        mock_run.assert_any_call(
-            ["qdbus", "org.kde.Shutdown", "/Shutdown", "logout"], check=True
+    def test_logout_command(self):
+        self.make(time_limit_minutes=60).logout_user()
+        self.assertEqual(
+            self.commands("qdbus")[-1], ["qdbus", "org.kde.Shutdown", "/Shutdown", "logout"]
         )
+
+    def test_logout_falls_back_to_ksmserver(self):
+        self.fail_commands.add("org.kde.Shutdown")
+        self.make(time_limit_minutes=60).logout_user()
+        self.assertEqual(self.commands("qdbus")[-1][1], "org.kde.ksmserver")
 
 
 if __name__ == "__main__":

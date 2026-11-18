@@ -63,10 +63,10 @@ kutimeout -t -s
 | Short | Long | Description |
 |-------|------|-------------|
 | `-l` | `--time-limit` | Daily time limit in minutes. Use `0` to disable, or `-1` to track time without logging out or notifications. |
-| `-t` | `--track-usage` | Track usage even if no time limit is set. |
+| `-t` | `--track-usage` | Track usage even if no time limit is set (`-l 0 -t` = track only). Use `--no-track-usage` to turn it off. |
 | `-s` | `--save` | Update the configuration file and exit immediately. |
-| `-g` | `--grace-period` | Minimum minutes to wait after startup before logout. |
-| `-w` | `--warning-minutes` | Minutes before logout to show a warning. |
+| `-g` | `--grace-period` | Minimum minutes to wait after startup before logout (default: 1 or from config). |
+| `-w` | `--warning-minutes` | Minutes before logout to show a warning (default: 5 or from config). |
 | `-c` | `--config` | Path to a custom configuration file. |
 | `-v` | `--verbose` | Enable detailed logging for troubleshooting. |
 | | `--help` | Show the help message and exit. |

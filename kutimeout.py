@@ -29,19 +29,37 @@ APP_NAME = "kutimeout"
 LOCALE_DIR = Path(__file__).parent / "locale"
 gettext.bindtextdomain(APP_NAME, LOCALE_DIR)
 gettext.textdomain(APP_NAME)
+_ = gettext.gettext
 
-
-def _(message):
-    return gettext.gettext(message)
-
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
 logger = logging.getLogger("kutimeout")
+
+DEFAULTS = {
+    "time_limit_minutes": 0,
+    "grace_period_minutes": 1,
+    "warning_minutes": 5,
+    "track_usage": False,
+}
+
+
+def _read_json(path):
+    """Return the dict stored in `path`, or None if missing or unreadable."""
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"Error loading {path}: {e}")
+        return None
+
+
+def _write_json(path, data):
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except OSError as e:
+        logger.error(f"Error saving {path}: {e}")
 
 
 class TimeoutManager:
@@ -52,226 +70,87 @@ class TimeoutManager:
         self,
         time_limit_minutes=None,
         config_file=None,
-        startup_grace_period=1,
-        warning_minutes=5,
+        startup_grace_period=None,
+        warning_minutes=None,
         track_usage=None,
     ):
         """
-        Initialize the timeout manager.
+        Initialize the timeout manager. Arguments left as None come from the
+        config file (or defaults); given values override and are saved to it.
 
         Args:
-            time_limit_minutes: Daily time limit in minutes (from CLI)
+            time_limit_minutes: Daily limit in minutes (0 = off, -1 = track only)
             config_file: Path to the configuration file
-            startup_grace_period: Grace period in minutes after startup before enforcing logout
+            startup_grace_period: Minutes after startup before enforcing logout
             warning_minutes: Minutes before logout to warn the user
             track_usage: Keep running and track usage even if no time limit is set
         """
-        self.cli_time_limit = time_limit_minutes
         self.startup_time = datetime.now()
         self.last_update = self.startup_time
         self.warning_shown = False  # Whether the pre-logout warning has been shown
         self.warning_shown_at = None  # When the warning was first shown
-        self.screen_locked = False  # Track screen lock state
+        self.screen_locked = False
 
-        # Use default config file if none provided
         if config_file is None:
-            self.config_file = Path.home() / ".config" / "kutimeout" / "config.json"
-        else:
-            self.config_file = Path(config_file)
-
+            config_file = Path.home() / ".config" / "kutimeout" / "config.json"
+        self.config_file = Path(config_file)
         # Usage file is stored next to the config file
         self.usage_file = self.config_file.parent / "usage.json"
 
-        # Create config directory if it doesn't exist
         try:
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             logger.error(f"Could not create config directory: {e}")
             sys.exit(1)
 
-        # Load or create config
-        self.config = self.load_config()
+        file_config = _read_json(self.config_file)
+        changed = file_config is None
+        file_config = file_config or {}
+        if "usage" in file_config or "last_update" in file_config:
+            self.migrate_usage(file_config)
+            changed = True
+        self.config = {**DEFAULTS, **file_config}
 
-        # Load or create usage
-        self.usage_data = self.load_usage()
-
-        config_updated = False
-
-        # Apply CLI overrides if provided
-        if self.cli_time_limit is not None:
-            if self.config.get("time_limit_minutes") != self.cli_time_limit:
-                logger.info(
-                    f"Overriding config time limit ({self.config.get('time_limit_minutes')} min) with CLI argument ({self.cli_time_limit} min)"
-                )
-                self.config["time_limit_minutes"] = self.cli_time_limit
-                config_updated = True
-
-        if startup_grace_period is not None:
-            if self.config.get("grace_period_minutes") != startup_grace_period:
-                logger.info(
-                    f"Overriding config grace period ({self.config.get('grace_period_minutes')} min) with CLI argument ({startup_grace_period} min)"
-                )
-                self.config["grace_period_minutes"] = startup_grace_period
-                config_updated = True
-
-        if warning_minutes is not None:
-            if self.config.get("warning_minutes") != warning_minutes:
-                logger.info(
-                    f"Overriding config warning time ({self.config.get('warning_minutes')} min) with CLI argument ({warning_minutes} min)"
-                )
-                self.config["warning_minutes"] = warning_minutes
-                config_updated = True
-
-        if track_usage is not None:
-            if self.config.get("track_usage") != track_usage:
-                logger.info(
-                    f"Overriding config track_usage ({self.config.get('track_usage')}) with CLI argument ({track_usage})"
-                )
-                self.config["track_usage"] = track_usage
-                config_updated = True
-
-        if config_updated:
-            self.save_config()
-
-        # Set the effective values from config (falling back to CLI/defaults)
-        self.time_limit_minutes = self.config.get(
-            "time_limit_minutes", self.cli_time_limit or 0
-        )
-        self.startup_grace_period = self.config.get(
-            "grace_period_minutes", startup_grace_period or 1
-        )
-        self.warning_minutes = self.config.get("warning_minutes", warning_minutes or 5)
-        self.track_usage = self.config.get("track_usage", track_usage or False)
-
-        # Check for missing or 0 time limit and exit if necessary
-        # When time_limit_minutes == -1, it should track time, but not logout, nor show the logout notification.
-        if (self.time_limit_minutes is None or self.time_limit_minutes == 0) and not self.track_usage:
-            logger.info(
-                "Daily time limit not set or disabled (time_limit_minutes == 0) and track_usage is False. Exiting."
-            )
-            sys.exit(0)
-
-        # Set up signal handlers for clean shutdown
-        signal.signal(signal.SIGINT, self.handle_signal)
-        signal.signal(signal.SIGTERM, self.handle_signal)
-
-    def load_config(self):
-        """Load configuration from file or create default if it doesn't exist."""
-        if self.config_file.exists():
-            try:
-                with open(self.config_file, "r") as f:
-                    config = json.load(f)
-                    # Handle migration from old version where usage was in config.json
-                    self.migrate_usage_if_needed(config)
-                    return config
-            except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"Error loading config: {e}")
-                return self.create_default_config()
-        else:
-            return self.create_default_config()
-
-    def migrate_usage_if_needed(self, config):
-        """Migrate usage data from the configuration dictionary to a separate usage file."""
-        has_usage = "usage" in config
-        has_last_update = "last_update" in config
-        if has_usage or has_last_update:
-            logger.info("Migrating usage metrics from config.json to usage.json...")
-
-            # Load existing usage file if it exists, or create a new dict
-            usage_data = {}
-            if self.usage_file.exists():
-                try:
-                    with open(self.usage_file, "r") as f:
-                        usage_data = json.load(f)
-                except (json.JSONDecodeError, IOError) as e:
-                    logger.error(f"Error loading existing usage.json: {e}")
-
-            # Migrate usage dict
-            if has_usage:
-                if "usage" not in usage_data:
-                    usage_data["usage"] = {}
-                for date, val in config["usage"].items():
-                    if date not in usage_data["usage"]:
-                        usage_data["usage"][date] = val
-                del config["usage"]
-
-            # Migrate last_update
-            if has_last_update:
-                if "last_update" not in usage_data:
-                    usage_data["last_update"] = config["last_update"]
-                del config["last_update"]
-
-            # Save usage file
-            self.save_usage(usage_data)
-
-            # Save config back to remove the usage fields
-            try:
-                with open(self.config_file, "w") as f:
-                    json.dump(config, f, indent=2)
-            except IOError as e:
-                logger.error(f"Error saving migrated config: {e}")
-
-    def load_usage(self):
-        """Load usage metrics from file or create default if it doesn't exist."""
-        if self.usage_file.exists():
-            try:
-                with open(self.usage_file, "r") as f:
-                    usage_data = json.load(f)
-                    if "usage" not in usage_data:
-                        usage_data["usage"] = {}
-                    if "last_update" not in usage_data:
-                        usage_data["last_update"] = datetime.now().isoformat()
-                    return usage_data
-            except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"Error loading usage: {e}")
-                return self.create_default_usage()
-        else:
-            return self.create_default_usage()
-
-    def create_default_usage(self):
-        """Create default usage data."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        usage_data = {
-            "usage": {today: 0},
-            "last_update": datetime.now().isoformat(),
+        overrides = {
+            "time_limit_minutes": time_limit_minutes,
+            "grace_period_minutes": startup_grace_period,
+            "warning_minutes": warning_minutes,
+            "track_usage": track_usage,
         }
-        self.save_usage(usage_data)
-        return usage_data
+        for key, value in overrides.items():
+            if value is not None and self.config[key] != value:
+                logger.info(
+                    f"Overriding config {key} ({self.config[key]}) with CLI argument ({value})"
+                )
+                self.config[key] = value
+                changed = True
+        if changed:
+            _write_json(self.config_file, self.config)
 
-    def save_usage(self, usage_data=None):
-        """Save the current usage data to file."""
-        if usage_data is None:
-            usage_data = self.usage_data
+        self.time_limit_minutes = self.config["time_limit_minutes"]
+        self.startup_grace_period = self.config["grace_period_minutes"]
+        self.warning_minutes = self.config["warning_minutes"]
+        self.track_usage = self.config["track_usage"]
 
-        try:
-            with open(self.usage_file, "w") as f:
-                json.dump(usage_data, f, indent=2)
-        except IOError as e:
-            logger.error(f"Error saving usage: {e}")
+        self.usage_data = _read_json(self.usage_file) or {}
+        self.usage_data.setdefault("usage", {})
+        self.usage_data.setdefault("last_update", datetime.now().isoformat())
 
-    def create_default_config(self):
-        """Create a default configuration."""
-        config = {
-            "time_limit_minutes": self.cli_time_limit
-            if self.cli_time_limit is not None
-            else 0,
-            "grace_period_minutes": 1,
-            "warning_minutes": 5,
-            "track_usage": False,
-        }
-        self.save_config(config)
-        return config
+    @property
+    def enabled(self):
+        """False when there is nothing to do: no limit and no usage tracking."""
+        return self.time_limit_minutes != 0 or self.track_usage
 
-    def save_config(self, config=None):
-        """Save the current configuration to file."""
-        if config is None:
-            config = self.config
-
-        try:
-            with open(self.config_file, "w") as f:
-                json.dump(config, f, indent=2)
-        except IOError as e:
-            logger.error(f"Error saving config: {e}")
+    def migrate_usage(self, config):
+        """Move usage data from a legacy config dict (in place) to usage.json."""
+        logger.info("Migrating usage metrics from config.json to usage.json...")
+        usage_data = _read_json(self.usage_file) or {}
+        usage = usage_data.setdefault("usage", {})
+        for date, val in config.pop("usage", {}).items():
+            usage.setdefault(date, val)
+        if "last_update" in config:
+            usage_data.setdefault("last_update", config.pop("last_update"))
+        _write_json(self.usage_file, usage_data)
 
     def is_screen_locked(self):
         """Check if the KDE screen is locked."""
@@ -318,43 +197,20 @@ class TimeoutManager:
             logger.error(f"Could not send notification: {e}")
 
     def update_usage(self):
-        """Update the usage time in the configuration. Skips counting when screen is locked."""
+        """Add elapsed time to today's usage (unless locked) and return today's minutes."""
         now = datetime.now()
         locked = self.is_screen_locked()
 
-    def update_usage(self):
-        """Update the usage time in the usage file. Skips counting when screen is locked."""
-        now = datetime.now()
-        locked = self.is_screen_locked()
-
-        # First read the current usage from file to get any external changes
-        current_usage_data = {}
-        if self.usage_file.exists():
-            try:
-                with open(self.usage_file, "r") as f:
-                    current_usage_data = json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"Error loading current usage: {e}")
-                # If we can't read the current usage, use the in-memory one
-                current_usage_data = self.usage_data
-        else:
-            current_usage_data = self.usage_data
-
+        # Re-read the file to honor external changes
+        data = _read_json(self.usage_file) or self.usage_data
+        usage = data.setdefault("usage", {})
         today = now.strftime("%Y-%m-%d")
+        usage.setdefault(today, 0)
 
-        # Ensure 'usage' exists in current_usage_data
-        if "usage" not in current_usage_data:
-            current_usage_data["usage"] = {}
-
-        # Initialize today's usage if not present in current usage
-        if today not in current_usage_data["usage"]:
-            current_usage_data["usage"][today] = 0
-
-        # Calculate time elapsed since last update
         elapsed_minutes = (now - self.last_update).total_seconds() / 60
         self.last_update = now
 
-        # Detect suspended/wake up system or time jumps (including negative clock adjustments)
+        # Detect suspend/wake or clock changes (including backwards)
         if elapsed_minutes > self.MAX_POLL_GAP_MINUTES or elapsed_minutes < 0:
             logger.info(
                 f"Time jump/clock change detected ({elapsed_minutes:.1f} min). "
@@ -362,48 +218,29 @@ class TimeoutManager:
             )
             elapsed_minutes = 0.0
 
-        # Only count time when the screen is NOT locked
         if not locked:
-            current_usage_data["usage"][today] += elapsed_minutes
+            usage[today] += elapsed_minutes
         else:
             logger.debug(f"Screen locked — not counting {elapsed_minutes:.1f} min")
 
-        current_usage_data["last_update"] = now.isoformat()
-
-        # Update in-memory usage with the updated values
-        self.usage_data = current_usage_data
-
-        # Save updated usage
-        self.save_usage(current_usage_data)
-
-        return self.usage_data["usage"][today]
+        data["last_update"] = now.isoformat()
+        self.usage_data = data
+        _write_json(self.usage_file, data)
+        return usage[today]
 
     def get_remaining_minutes(self):
         """Get the remaining minutes for today."""
         today = datetime.now().strftime("%Y-%m-%d")
-        current_usage = self.usage_data.get("usage", {}).get(today, 0)
-        return (
-            self.config.get("time_limit_minutes", self.time_limit_minutes)
-            - current_usage
-        )
+        used = self.usage_data["usage"].get(today, 0)
+        return self.time_limit_minutes - used
 
     def check_time_limit(self):
         """Check if the time limit has been reached and handle warnings.
 
         Returns True only when it's time to actually log out (after warning period).
         """
-        # When time_limit_minutes == -1, it should track time, but not logout, nor show the logout notification.
-        if self.config.get("time_limit_minutes", self.time_limit_minutes) == -1:
-            return False
-
-        today = datetime.now().strftime("%Y-%m-%d")
-
-        # Initialize today's usage if not present
-        if today not in self.usage_data.get("usage", {}):
-            if "usage" not in self.usage_data:
-                self.usage_data["usage"] = {}
-            self.usage_data["usage"][today] = 0
-            self.save_usage()
+        # Limit <= 0 never warns or logs out (-1 / 0 with tracking = track only).
+        if self.time_limit_minutes <= 0:
             return False
 
         remaining = self.get_remaining_minutes()
@@ -435,35 +272,27 @@ class TimeoutManager:
             self.notify_user(_("Time Limit Warning"), msg)
             return False
 
-        # Only proceed to logout after both:
-        # 1. The daily limit has been reached (remaining <= 0)
-        # 2. The full warning period has elapsed
-        if self.warning_shown:
+        # Log out only after the limit is reached AND the full warning period elapsed
+        if self.warning_shown and remaining <= 0:
             warning_elapsed = (
                 datetime.now() - self.warning_shown_at
             ).total_seconds() / 60
-            if remaining <= 0 and warning_elapsed >= self.warning_minutes:
+            if warning_elapsed >= self.warning_minutes:
                 return True
-
-            if remaining <= 0:
-                mins_left = self.warning_minutes - warning_elapsed
-                # Use debug to avoid log spam, the main loop already prints status
-                logger.debug(
-                    f"Logout in {mins_left:.1f} min (waiting for warning period)"
-                )
+            logger.debug(
+                f"Logout in {self.warning_minutes - warning_elapsed:.1f} min (waiting for warning period)"
+            )
 
         return False
 
     def logout_user(self):
         """Log out the current KDE Plasma session."""
         try:
-            # Using qdbus to trigger KDE logout
             subprocess.run(
                 ["qdbus", "org.kde.Shutdown", "/Shutdown", "logout"], check=True
             )
-
             logger.info("Logging out user due to time limit reached.")
-        except subprocess.SubprocessError as e:
+        except (subprocess.SubprocessError, OSError) as e:
             logger.error(f"Error logging out: {e}")
             # Fallback method
             try:
@@ -479,32 +308,26 @@ class TimeoutManager:
                     ],
                     check=True,
                 )
-            except subprocess.SubprocessError as e2:
+            except (subprocess.SubprocessError, OSError) as e2:
                 logger.error(f"Fallback logout failed: {e2}")
-
-    def handle_signal(self, signum, frame):
-        """Handle termination signals gracefully."""
-        logger.info(f"Received signal {signum}, shutting down...")
-        self.update_usage()
-        sys.exit(0)
 
     def run(self):
         """Main execution loop."""
-        time_limit = self.config.get("time_limit_minutes", self.time_limit_minutes)
+        limit = self.time_limit_minutes
         logger.info(
-            f"Starting KDE Timeout Manager (limit: {time_limit} min/day, "
+            f"Starting KDE Timeout Manager (limit: {limit} min/day, "
             f"warning: {self.warning_minutes} min, grace: {self.startup_grace_period} min)"
         )
 
+        # Turn SIGTERM into a normal exit so the usage is saved in `finally`
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+
         try:
             while True:
-                # Update usage time (skips counting when screen is locked)
                 current_usage = self.update_usage()
 
-                # Check if time limit is reached (handles warnings + grace)
                 if self.check_time_limit():
-                    current_time_limit = self.config.get("time_limit_minutes", self.time_limit_minutes)
-                    logger.info(f"Time limit of {current_time_limit} minutes reached.")
+                    logger.info(f"Time limit of {limit} minutes reached.")
                     logger.info(f"Total usage today: {current_usage:.2f} minutes")
                     self.notify_user(
                         _("Logging Out"),
@@ -514,14 +337,13 @@ class TimeoutManager:
                     self.logout_user()
                     break
 
-                # Calculate and display remaining time
-                current_time_limit = self.config.get("time_limit_minutes", self.time_limit_minutes)
-                if current_time_limit == -1:
+                if limit <= 0:
                     logger.info(
                         f"Time used: {current_usage:.1f} min. (No limit enforced)"
                     )
+                    remaining = None
                 else:
-                    remaining = self.get_remaining_minutes()
+                    remaining = limit - current_usage
                     logger.info(
                         f"Time used: {current_usage:.1f} min. Remaining: {remaining:.1f} min"
                     )
@@ -529,22 +351,19 @@ class TimeoutManager:
                 # Poll more frequently when close to limit or during warning period
                 if self.warning_shown:
                     time.sleep(15)
-                elif current_time_limit != -1 and remaining <= self.warning_minutes + 1:
+                elif remaining is not None and remaining <= self.warning_minutes + 1:
                     time.sleep(30)
                 else:
                     time.sleep(60)
-
         except KeyboardInterrupt:
             logger.info("Manually interrupted.")
-            self.update_usage()
-        except Exception as e:
-            logger.exception(f"Unexpected error: {e}")
+        finally:
             self.update_usage()
 
         logger.info("Timeout manager stopped.")
 
 
-def main():
+def main(argv=None):
     """Parse command line arguments and start the timeout manager."""
     parser = argparse.ArgumentParser(
         description=_("KDE Plasma session timeout manager")
@@ -562,22 +381,24 @@ def main():
         "-g",
         "--grace-period",
         type=int,
-        default=1,
+        default=None,
         help=_(
-            "Minimum minutes to wait after startup before logging out, even if the limit is exceeded (default: 1)"
+            "Minimum minutes to wait after startup before logging out, even if the limit is exceeded (default: 1 or from config)"
         ),
     )
     parser.add_argument(
         "-w",
         "--warning-minutes",
         type=int,
-        default=5,
-        help=_("Minutes before logout to show a warning notification (default: 5)"),
+        default=None,
+        help=_(
+            "Minutes before logout to show a warning notification (default: 5 or from config)"
+        ),
     )
     parser.add_argument(
         "-t",
         "--track-usage",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=None,
         help=_("Keep the service running and track usage even if no time limit is set"),
     )
@@ -605,10 +426,13 @@ def main():
         ),
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
 
     # Multi-user consideration: warn if running as root
     if os.geteuid() == 0:
@@ -616,8 +440,7 @@ def main():
             "Running as root! This script is intended to run as a normal user to manage their session."
         )
 
-    # Create and run the timeout manager
-    timeout_manager = TimeoutManager(
+    manager = TimeoutManager(
         time_limit_minutes=args.time_limit,
         config_file=args.config,
         startup_grace_period=args.grace_period,
@@ -626,10 +449,16 @@ def main():
     )
 
     if args.save:
-        logger.info(f"Configuration saved to {timeout_manager.config_file}. Exiting.")
+        logger.info(f"Configuration saved to {manager.config_file}. Exiting.")
         sys.exit(0)
 
-    timeout_manager.run()
+    if not manager.enabled:
+        logger.info(
+            "Daily time limit not set (time_limit_minutes == 0) and track_usage is False. Exiting."
+        )
+        sys.exit(0)
+
+    manager.run()
 
 
 if __name__ == "__main__":
