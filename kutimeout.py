@@ -55,9 +55,15 @@ def _read_json(path):
 
 
 def _write_json(path, data):
+    """Write atomically: a crash mid-write leaves the previous file intact."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
     try:
-        with open(path, "w") as f:
+        with open(tmp, "w") as f:
             json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
     except OSError as e:
         logger.error(f"Error saving {path}: {e}")
 

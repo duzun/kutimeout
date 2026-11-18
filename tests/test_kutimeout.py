@@ -115,6 +115,19 @@ class TestTimeoutManager(unittest.TestCase):
         self.set_usage(40)
         self.assertAlmostEqual(tm.update_usage(), 40.0, places=1)
 
+    def test_interrupted_write_keeps_previous_usage(self):
+        tm = self.make(time_limit_minutes=60)
+        self.set_usage(40)
+
+        def crash_mid_write(data, f, **kw):
+            f.write('{"usage": {')  # partial write, then crash
+            raise OSError("disk full")
+
+        with patch.object(kutimeout.json, "dump", side_effect=crash_mid_write):
+            tm.update_usage()
+
+        self.assertEqual(self.read(self.usage_file)["usage"][self.today()], 40)
+
     # --- warning and logout ---
 
     def test_warning_only_inside_warning_window(self):
